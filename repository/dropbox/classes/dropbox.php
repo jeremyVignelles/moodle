@@ -48,10 +48,9 @@ class dropbox extends client {
      * Create the DropBox API Client.
      *
      * @param   issuer      $issuer     The dropbox issuer
-     * @param   string      $callback   The callback URL
      */
-    public function __construct(issuer $issuer, $callback) {
-        parent::__construct($issuer, $callback, '', false, true);
+    public function __construct(issuer $issuer) {
+        parent::__construct($issuer, '', false, true);
     }
 
     /**
