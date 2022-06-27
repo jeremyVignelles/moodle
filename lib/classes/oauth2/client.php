@@ -292,10 +292,13 @@ class client extends \oauth2_client {
                     return false;
                 }
 
-                // Otherwise, save the access token and, if provided, the new refresh token.
+                // Otherwise, save the access token and, if provided, the new refresh token and id token.
                 $this->store_token($tokensreceived['access_token']);
                 if (!empty($tokensreceived['refresh_token'])) {
                     $this->store_user_refresh_token($tokensreceived['refresh_token']);
+                }
+                if (!empty($tokensreceived['id_token'])) {
+                    $this->store_idtoken($tokensreceived['id_token']);
                 }
                 return true;
             } catch (\moodle_exception $e) {
@@ -478,6 +481,9 @@ class client extends \oauth2_client {
             $systemaccount->set('refreshtoken', $receivedtokens['refresh_token']->token);
             $systemaccount->update();
         }
+        if (!empty($tokensreceived['id_token'])) {
+            $this->store_idtoken($tokensreceived['id_token']);
+        }
 
         return true;
     }
@@ -490,28 +496,39 @@ class client extends \oauth2_client {
      * @throws moodle_exception if the response is empty after decoding it.
      */
     public function get_userinfo() {
+        $idtokenclaims = [];
+        $userinfoclaims = [];
+
+        if (!empty($this->idtoken)) {
+            $explodedtoken = explode('.', $this->idtoken);
+            $decodedtokenpayload = base64_decode($explodedtoken[1]);
+            $idtokenclaims = json_decode($decodedtokenpayload, true);
+        }
+
         $url = $this->get_issuer()->get_endpoint_url('userinfo');
-        if (empty($url)) {
+        if (!empty($url)) {
+            $response = $this->get($url);
+            if (!$response) {
+                return false;
+            }
+            try {
+                $userinfoclaims = json_decode($response, true);
+            } catch (\Exception $e) {
+                return false;
+            }
+
+            if (count($userinfoclaims) === 0) {
+                // Throw an exception displaying the original response, because, at this point, $userinfo shouldn't be empty.
+                throw new moodle_exception($response);
+            }
+        }
+
+        if (count($idtokenclaims) + count($userinfoclaims) === 0) {
             return false;
         }
 
-        $response = $this->get($url);
-        if (!$response) {
-            return false;
-        }
-        $userinfo = new stdClass();
-        try {
-            $userinfo = json_decode($response);
-        } catch (\Exception $e) {
-            return false;
-        }
-
-        if (is_null($userinfo)) {
-            // Throw an exception displaying the original response, because, at this point, $userinfo shouldn't be empty.
-            throw new moodle_exception($response);
-        }
-
-        return $this->map_userinfo_to_fields($userinfo);
+        $mergedclaims = array_merge($idtokenclaims, $userinfoclaims);
+        return $this->map_userinfo_to_fields((object)$mergedclaims);
     }
 
     /**
