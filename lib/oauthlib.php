@@ -395,12 +395,12 @@ abstract class oauth2_client extends curl {
     private $clientid = '';
     /** @var string $clientsecret The client secret. */
     private $clientsecret = '';
-    /** @var moodle_url $returnurl URL to return to after authenticating */
-    private $returnurl = null;
     /** @var string $scope of the authentication request */
     protected $scope = '';
     /** @var stdClass $accesstoken access token object */
     protected $accesstoken = null;
+    /** @var string $idtoken ID token string */
+    protected $idtoken = null;
     /** @var string $refreshtoken refresh token string */
     protected $refreshtoken = '';
     /** @var string $mocknextresponse string */
@@ -427,16 +427,15 @@ abstract class oauth2_client extends curl {
      *
      * @param string $clientid
      * @param string $clientsecret
-     * @param moodle_url $returnurl
      * @param string $scope
      */
-    public function __construct($clientid, $clientsecret, moodle_url $returnurl, $scope) {
+    public function __construct($clientid, $clientsecret, $scope) {
         parent::__construct();
         $this->clientid = $clientid;
         $this->clientsecret = $clientsecret;
-        $this->returnurl = $returnurl;
         $this->scope = $scope;
         $this->accesstoken = $this->get_stored_token();
+        $this->idtoken = $this->get_stored_idtoken();
     }
 
     /**
@@ -489,8 +488,6 @@ abstract class oauth2_client extends curl {
      * @return moodle_url url of callback
      */
     public static function callback_url() {
-        global $CFG;
-
         return new moodle_url('/admin/oauth2callback.php');
     }
 
@@ -506,16 +503,17 @@ abstract class oauth2_client extends curl {
     /**
      * Returns the login link for this oauth request
      *
+     * @param moodle_url $returnurl The URL to which to redirect the user after a successful OAuth login
      * @return moodle_url login url
      */
-    public function get_login_url() {
-
+    public function get_login_url(moodle_url $returnurl) {
+        global $SESSION;
         $callbackurl = self::callback_url();
         $defaultparams = [
             'client_id' => $this->clientid,
             'response_type' => 'code',
             'redirect_uri' => $callbackurl->out(false),
-            'state' => $this->returnurl->out_as_local_url(false),
+            'state' => sesskey(),
 
         ];
         if (!empty($this->scope)) {
@@ -530,6 +528,7 @@ abstract class oauth2_client extends curl {
             $this->get_additional_login_parameters()
         );
 
+        $SESSION->oauth_post_login_redirect = $returnurl->out_as_local_url(false);
         return new moodle_url($this->auth_url(), $params);
     }
 
@@ -610,6 +609,10 @@ abstract class oauth2_client extends curl {
         self::$upgradedcodes[] = $code;
         $this->store_token($accesstoken);
 
+        if (isset($r->id_token)) {
+            $this->store_idtoken($r->id_token);
+        }
+
         return true;
     }
 
@@ -618,6 +621,7 @@ abstract class oauth2_client extends curl {
      */
     public function log_out() {
         $this->store_token(null);
+        $this->store_idtoken(null);
     }
 
     /**
@@ -670,7 +674,7 @@ abstract class oauth2_client extends curl {
      * Returns the tokenname for the access_token to be stored
      * through multiple requests.
      *
-     * The default implentation is to use the classname combiend
+     * The default implentation is to use the classname combined
      * with the scope.
      *
      * @return string tokenname for prefernce storage
@@ -709,7 +713,7 @@ abstract class oauth2_client extends curl {
     }
 
     /**
-     * Retrieve a token stored.
+     * Retrieve a stored access token.
      *
      * @return stdClass|null token object
      */
@@ -734,6 +738,53 @@ abstract class oauth2_client extends curl {
      */
     public function get_accesstoken() {
         return $this->accesstoken;
+    }
+
+    /**
+     * Store an ID token between requests. Currently uses
+     * session named by get_tokenname, prefixed with "idt-"
+     *
+     * @param string|null $token ID token string to store or null to clear
+     */
+    protected function store_idtoken($token) {
+        global $SESSION;
+
+        $this->idtoken = $token;
+        $name = 'idt-' . $this->get_tokenname();
+
+        if ($token !== null) {
+            $SESSION->{$name} = $token;
+        } else {
+            unset($SESSION->{$name});
+        }
+    }
+
+    /**
+     * Retrieve a stored ID token.
+     *
+     * @return string|null ID token string
+     */
+    protected function get_stored_idtoken() {
+        global $SESSION;
+
+        $name = 'idt-' . $this->get_tokenname();
+
+        if (isset($SESSION->{$name})) {
+            return $SESSION->{$name};
+        }
+
+        return null;
+    }
+
+    /**
+     * Get ID token.
+     *
+     * This is just a getter to read the private property.
+     *
+     * @return string
+     */
+    public function get_idtoken() {
+        return $this->idtoken;
     }
 
     /**
